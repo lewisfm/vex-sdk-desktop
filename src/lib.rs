@@ -9,35 +9,26 @@ pub mod sdk;
 mod macos;
 
 use std::{
-    io::Cursor,
-    num::NonZeroU32,
-    rc::Rc,
-    sync::{OnceLock, atomic::Ordering},
+    sync::OnceLock,
     thread::{self},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use image::{ImageFormat, ImageReader, codecs::png::PngDecoder};
-use softbuffer::{Context, Surface};
-use tracing::{debug, error, trace};
+use softbuffer::Context;
+use tracing::{error, trace};
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
     event::{StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle},
-    window::{Theme, Window, WindowId},
+    window::WindowId,
 };
 
-use crate::{
-    canvas::{AUTORENDER, CANVAS, Canvas, HEADER_COLOR, HEADER_HEIGHT, Rect, WIDTH},
-    display::SimDisplayWindow,
-};
+use crate::display::SimDisplayWindow;
 
 type DisplayCtx = Context<OwnedDisplayHandle>;
 
-enum SimEvent {
-}
+enum SimEvent {}
 
 static SIM_APP: OnceLock<EventLoopProxy<SimEvent>> = OnceLock::new();
 
@@ -97,7 +88,6 @@ impl<E: FnOnce() + Send + 'static> ApplicationHandler<SimEvent> for Simulator<E>
         }
 
         if let Some(run_app) = self.entrypoint.take() {
-            // thread::spawn(header_task);
             thread::spawn(run_app);
         }
     }
@@ -108,7 +98,9 @@ impl<E: FnOnce() + Send + 'static> ApplicationHandler<SimEvent> for Simulator<E>
                 // Start a timer for rendering the display at 60 fps.
                 self.schedule_render(event_loop, Instant::now());
             }
-            StartCause::ResumeTimeReached { requested_resume, .. } => {
+            StartCause::ResumeTimeReached {
+                requested_resume, ..
+            } => {
                 // 60Hz render timer has triggered, so render a frame.
                 self.schedule_render(event_loop, requested_resume);
 

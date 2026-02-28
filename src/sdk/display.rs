@@ -29,7 +29,7 @@ pub extern "C" fn vexDisplayScroll(nStartLine: i32, nLines: i32) {}
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayScrollRect(x1: i32, y1: i32, x2: i32, y2: i32, nLines: i32) {}
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayCopyRect(
+pub unsafe extern "C" fn vexDisplayCopyRect(
     x1: i32,
     y1: i32,
     x2: i32,
@@ -37,6 +37,13 @@ pub extern "C" fn vexDisplayCopyRect(
     pSrc: *mut u32,
     srcStride: i32,
 ) {
+    unsafe {
+        CANVAS.lock().copy_rect(
+            Rect::from_sdk(x1, y1, x2, y2),
+            pSrc,
+            srcStride.max(0) as usize,
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -58,10 +65,37 @@ pub extern "C" fn vexDisplayPixelClear(x: u32, y: u32) {
     });
     canvas.state.swap_colors();
 }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayLineDraw(x1: i32, y1: i32, x2: i32, y2: i32) {}
+pub extern "C" fn vexDisplayLineDraw(x1: i32, y1: i32, x2: i32, y2: i32) {
+    let mut canvas = CANVAS.lock();
+    canvas.draw_line(
+        Point {
+            x: x1,
+            y: y1 + HEADER_HEIGHT,
+        },
+        Point {
+            x: x2,
+            y: y2 + HEADER_HEIGHT,
+        },
+    );
+}
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayLineClear(x1: i32, y1: i32, x2: i32, y2: i32) {}
+pub extern "C" fn vexDisplayLineClear(x1: i32, y1: i32, x2: i32, y2: i32) {
+    let mut canvas = CANVAS.lock();
+    canvas.state.swap_colors();
+    canvas.draw_line(
+        Point {
+            x: x1,
+            y: y1 + HEADER_HEIGHT,
+        },
+        Point {
+            x: x2,
+            y: y2 + HEADER_HEIGHT,
+        },
+    );
+    canvas.state.swap_colors();
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayRectDraw(x1: i32, y1: i32, x2: i32, y2: i32) {
@@ -123,14 +157,17 @@ pub extern "C" fn vexDisplayCircleFill(xc: i32, yc: i32, radius: i32) {
 pub extern "C" fn vexDisplayTextSize(n: u32, d: u32) {}
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayFontNamedSet(pFontName: *const c_char) {}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayForegroundColorGet() -> u32 {
-    Default::default()
+    CANVAS.lock().state.fg_color
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayBackgroundColorGet() -> u32 {
-    Default::default()
+    CANVAS.lock().state.bg_color
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vexDisplayStringWidthGet(pString: *const c_char) -> i32 {
     Default::default()
@@ -139,14 +176,22 @@ pub unsafe extern "C" fn vexDisplayStringWidthGet(pString: *const c_char) -> i32
 pub unsafe extern "C" fn vexDisplayStringHeightGet(pString: *const c_char) -> i32 {
     Default::default()
 }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayPenSizeSet(width: u32) {}
+pub extern "C" fn vexDisplayPenSizeSet(width: u32) {
+    CANVAS.lock().state.pen_size = width;
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayPenSizeGet() -> u32 {
-    Default::default()
+    CANVAS.lock().state.pen_size
 }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayClipRegionSet(x1: i32, y1: i32, x2: i32, y2: i32) {}
+pub extern "C" fn vexDisplayClipRegionSet(x1: i32, y1: i32, x2: i32, y2: i32) {
+    let region = Rect::new(x1, y1, x2 + 1, y2 + 1);
+    CANVAS.lock().state.set_clip_region(region);
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayRender(bVsyncWait: bool, bRunScheduler: bool) {
@@ -178,7 +223,9 @@ pub extern "C" fn vexDisplayDoubleBufferDisable() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayClipRegionSetWithIndex(index: i32, x1: i32, y1: i32, x2: i32, y2: i32) {
+    unimplemented!("VEXos task api")
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vexImageBmpRead(
     ibuf: *const u8,

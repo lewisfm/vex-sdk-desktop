@@ -14,6 +14,7 @@ softbuffer = "0.4.8"
 tracing = "0.1.44"
 vex-sdk = "0.28.0"
 winit = "0.30.12"
+embedded-graphics = { version = "0.8.2", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3.1"
@@ -23,5 +24,6 @@ objc2-app-kit = { version = "0.3.2", features = ["objc2-core-graphics", "NSImage
 objc2-core-graphics = { version = "0.3.2", features = ["CGDataProvider", "CGColorSpace"] }
 
 [dev-dependencies]
+tinybmp = "0.7.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 vexide = { version = "0.8.0", features = ["full"] }

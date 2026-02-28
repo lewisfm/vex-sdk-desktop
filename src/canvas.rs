@@ -2,17 +2,11 @@ use std::{
     fmt::{self, Formatter},
     mem,
     ops::RangeInclusive,
-    sync::atomic::AtomicBool,
 };
 
 use line_drawing::{Bresenham, BresenhamCircle};
 use parking_lot::Mutex;
-use tracing::{debug, info, trace};
-
-use crate::{
-    SIM_APP, SimEvent,
-    display::{SimDisplay, SimDisplayWindow},
-};
+use tracing::trace;
 
 pub const WIDTH: u32 = 480;
 pub const HEIGHT: u32 = 272;
@@ -26,13 +20,13 @@ pub const HEADER_COLOR: u32 = 0x00_99_CC;
 /// The canvas instance used by user code.
 pub static CANVAS: Mutex<Canvas> = Mutex::new(Canvas::new());
 
-/// Indicates whether the render thread should automatically render the [user canvas](CANVAS).
-pub static AUTORENDER: AtomicBool = AtomicBool::new(true);
-
 #[derive(Debug, Clone, Copy)]
 pub struct CanvasState {
     pub fg_color: u32,
     pub bg_color: u32,
+    // This doesn't seem to affect any operations, but we store it so we can return it from
+    // `vexDisplayPenSizeGet`.
+    pub pen_size: u32,
     clip_region: Rect,
 }
 
@@ -44,6 +38,10 @@ impl CanvasState {
     pub fn set_clip_region(&mut self, mut region: Rect) {
         region.clip_to(&Rect::FULL_CLIP);
         self.clip_region = region;
+    }
+
+    pub fn clip_region(&self) -> Rect {
+        self.clip_region
     }
 }
 
@@ -59,6 +57,7 @@ impl Canvas {
             fg_color: DEFAULT_FG_COLOR,
             bg_color: DEFAULT_BG_COLOR,
             clip_region: Rect::FULL_CLIP,
+            pen_size: 1,
         };
 
         Self {
@@ -96,7 +95,7 @@ impl Canvas {
         let clip = self.state.clip_region;
 
         // Is the line above or below the clip region?
-        if !(clip.0.y..=clip.1.y).contains(&y) {
+        if !(clip.0.y..clip.1.y).contains(&y) {
             return;
         }
 
@@ -117,7 +116,7 @@ impl Canvas {
         let clip = self.state.clip_region;
 
         // Is the line left or right of the clip region?
-        if !(clip.0.x..=clip.1.x).contains(&x) {
+        if !(clip.0.x..clip.1.x).contains(&x) {
             return;
         }
 
@@ -129,6 +128,14 @@ impl Canvas {
 
         for y in y_range {
             self.write_pixel(Point { x, y }, self.state.fg_color);
+        }
+    }
+
+    pub fn draw_line(&mut self, start: Point, end: Point) {
+        trace!(?start, ?end, "line");
+
+        for (x, y) in Bresenham::new((start.x, start.y), (end.x, end.y)) {
+            self.set_pixel(Point { x, y });
         }
     }
 
@@ -174,7 +181,7 @@ impl Canvas {
         let mut lines = vec![(center.x, center.x); num_lines as usize];
 
         for (dx, i) in BresenhamCircle::new(0, radius as i32, radius as i32) {
-            let x = center.x as i32 + dx;
+            let x = center.x + dx;
 
             // The tops and bottoms of circles have several points on the same line, so only record
             // the leftmost or rightmost point for our horizontal line.
@@ -205,9 +212,23 @@ impl Canvas {
 
         let clip = self.state.clip_region;
 
-        for (x, y) in BresenhamCircle::new(center.x as i32, center.y as i32, radius as i32) {
+        for (x, y) in BresenhamCircle::new(center.x, center.y, radius as i32) {
             if (Point { x, y }).is_inside(&clip) {
                 self.write_pixel(Point { x, y }, self.state.fg_color);
+            }
+        }
+    }
+
+    pub unsafe fn copy_rect(&mut self, mut bounds: Rect, source: *const u32, stride: usize) {
+        trace!(?bounds, ?source, ?stride, "copy rect");
+        bounds.clip_to(&self.state.clip_region);
+
+        for (row_idx, row) in (bounds.0.y..bounds.1.y).enumerate() {
+            for (col_idx, col) in (bounds.0.x..bounds.1.x).enumerate() {
+                let dest_idx = row * WIDTH as i32 + col;
+                let source_idx = row_idx * stride + col_idx;
+                let pixel = unsafe { source.add(source_idx).read() };
+                self.buffer[dest_idx as usize] = pixel;
             }
         }
     }
@@ -247,8 +268,8 @@ pub struct Rect(pub Point, pub Point);
 
 impl Rect {
     pub const FULL_CLIP: Self = Rect::new(0, 0, WIDTH as i32, HEIGHT as i32);
-    pub const USER_CLIP: Self = Rect::new(0, HEADER_HEIGHT as i32, WIDTH as i32, HEIGHT as i32);
-    pub const HEADER_CLIP: Self = Rect::new(0, 0, WIDTH as i32, HEADER_HEIGHT as i32);
+    pub const USER_CLIP: Self = Rect::new(0, HEADER_HEIGHT, WIDTH as i32, HEIGHT as i32);
+    pub const HEADER_CLIP: Self = Rect::new(0, 0, WIDTH as i32, HEADER_HEIGHT);
 
     pub const fn new(mut x0: i32, mut y0: i32, mut x1: i32, mut y1: i32) -> Self {
         if x0 > x1 {
