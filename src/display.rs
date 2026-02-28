@@ -217,9 +217,11 @@ impl SimDisplay {
     }
 
     /// Copy a rectangle of pixels from the source onto the display.
-    pub fn blit_rect(&mut self, source: &[u32; BUFSZ], mask: Rect) {
+    pub fn blit_rect(&mut self, source: &[u32; BUFSZ], mut mask: Rect) {
+        mask.clip_to(&Rect::FULL_CLIP);
+
         for pixel in mask.pixels() {
-            let idx = (pixel.y * WIDTH + pixel.x) as usize;
+            let idx = (pixel.y * WIDTH as i32 + pixel.x) as usize;
             self.buffer[idx] = source[idx];
         }
     }

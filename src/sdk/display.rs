@@ -43,8 +43,8 @@ pub extern "C" fn vexDisplayCopyRect(
 pub extern "C" fn vexDisplayPixelSet(x: u32, y: u32) {
     let mut canvas = CANVAS.lock();
     canvas.set_pixel(Point {
-        x,
-        y: y + HEADER_HEIGHT,
+        x: x as i32,
+        y: y as i32 + HEADER_HEIGHT,
     });
 }
 
@@ -53,8 +53,8 @@ pub extern "C" fn vexDisplayPixelClear(x: u32, y: u32) {
     let mut canvas = CANVAS.lock();
     canvas.state.swap_colors();
     canvas.set_pixel(Point {
-        x,
-        y: y + HEADER_HEIGHT,
+        x: x as i32,
+        y: y as i32 + HEADER_HEIGHT,
     });
     canvas.state.swap_colors();
 }
@@ -88,8 +88,8 @@ pub extern "C" fn vexDisplayCircleDraw(xc: i32, yc: i32, radius: i32) {
     let mut canvas = CANVAS.lock();
 
     let point = Point {
-        x: xc.max(0) as u32,
-        y: yc.max(0) as u32 + HEADER_HEIGHT,
+        x: xc,
+        y: yc + HEADER_HEIGHT,
     };
     canvas.trace_circle(point, radius.max(0) as u32);
 }
@@ -100,8 +100,8 @@ pub extern "C" fn vexDisplayCircleClear(xc: i32, yc: i32, radius: i32) {
     canvas.state.swap_colors();
 
     let point = Point {
-        x: xc.max(0) as u32,
-        y: yc.max(0) as u32 + HEADER_HEIGHT,
+        x: xc,
+        y: yc + HEADER_HEIGHT,
     };
     canvas.fill_circle(point, radius.max(0) as u32);
 
@@ -113,8 +113,8 @@ pub extern "C" fn vexDisplayCircleFill(xc: i32, yc: i32, radius: i32) {
     let mut canvas = CANVAS.lock();
 
     let point = Point {
-        x: xc.max(0) as u32,
-        y: yc.max(0) as u32 + HEADER_HEIGHT,
+        x: xc,
+        y: yc + HEADER_HEIGHT,
     };
     canvas.fill_circle(point, radius.max(0) as u32);
 }

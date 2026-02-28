@@ -5,18 +5,18 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use line_drawing::BresenhamCircle;
+use line_drawing::{Bresenham, BresenhamCircle};
 use parking_lot::Mutex;
-use tracing::{debug, trace, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     SIM_APP, SimEvent,
-    display::{SimDisplayWindow, SimDisplay},
+    display::{SimDisplay, SimDisplayWindow},
 };
 
 pub const WIDTH: u32 = 480;
 pub const HEIGHT: u32 = 272;
-pub const HEADER_HEIGHT: u32 = 32;
+pub const HEADER_HEIGHT: i32 = 32;
 pub const BUFSZ: usize = WIDTH as usize * HEIGHT as usize;
 
 pub const DEFAULT_BG_COLOR: u32 = 0x00_00_00;
@@ -81,13 +81,16 @@ impl Canvas {
             return;
         }
 
-        let idx = point.y * WIDTH + point.x;
-        self.buffer[idx as usize] = self.state.fg_color;
-
         trace!(color = %Hex(self.state.fg_color), ?point, "update pixel");
+        self.write_pixel(point, self.state.fg_color);
     }
 
-    pub fn draw_horizontal_line(&mut self, x_range: RangeInclusive<u32>, y: u32) {
+    fn write_pixel(&mut self, point: Point, color: u32) {
+        let idx = point.y * WIDTH as i32 + point.x;
+        self.buffer[idx as usize] = color;
+    }
+
+    pub fn draw_horizontal_line(&mut self, x_range: RangeInclusive<i32>, y: i32) {
         trace!(?x_range, y, "horizontal line");
 
         let clip = self.state.clip_region;
@@ -104,12 +107,11 @@ impl Canvas {
         };
 
         for x in x_range {
-            let idx = y * WIDTH + x;
-            self.buffer[idx as usize] = self.state.fg_color;
+            self.write_pixel(Point { x, y }, self.state.fg_color);
         }
     }
 
-    pub fn draw_vertical_line(&mut self, x: u32, y_range: RangeInclusive<u32>) {
+    pub fn draw_vertical_line(&mut self, x: i32, y_range: RangeInclusive<i32>) {
         trace!(x, ?y_range, "vertical line");
 
         let clip = self.state.clip_region;
@@ -126,8 +128,7 @@ impl Canvas {
         };
 
         for y in y_range {
-            let idx = y * WIDTH + x;
-            self.buffer[idx as usize] = self.state.fg_color;
+            self.write_pixel(Point { x, y }, self.state.fg_color);
         }
     }
 
@@ -137,8 +138,7 @@ impl Canvas {
         bounds.clip_to(&self.state.clip_region);
 
         for pixel in bounds.pixels() {
-            let idx = pixel.y * WIDTH + pixel.x;
-            self.buffer[idx as usize] = self.state.fg_color;
+            self.write_pixel(pixel, self.state.fg_color);
         }
     }
 
@@ -174,7 +174,7 @@ impl Canvas {
         let mut lines = vec![(center.x, center.x); num_lines as usize];
 
         for (dx, i) in BresenhamCircle::new(0, radius as i32, radius as i32) {
-            let x = (center.x as i32 + dx).max(0) as u32;
+            let x = center.x as i32 + dx;
 
             // The tops and bottoms of circles have several points on the same line, so only record
             // the leftmost or rightmost point for our horizontal line.
@@ -189,7 +189,7 @@ impl Canvas {
 
         // Iterate through each line and draw it.
         for (line, (left, right)) in lines.into_iter().enumerate() {
-            let y = center.y - radius + line as u32;
+            let y = center.y - radius as i32 + line as i32;
             self.draw_horizontal_line(left..=right, y);
         }
     }
@@ -206,19 +206,15 @@ impl Canvas {
         let clip = self.state.clip_region;
 
         for (x, y) in BresenhamCircle::new(center.x as i32, center.y as i32, radius as i32) {
-            if let Ok(x) = x.try_into()
-                && let Ok(y) = y.try_into()
-                && (Point { x, y }).is_inside(&clip)
-            {
-                let idx = y * WIDTH + x;
-                self.buffer[idx as usize] = self.state.fg_color;
+            if (Point { x, y }).is_inside(&clip) {
+                self.write_pixel(Point { x, y }, self.state.fg_color);
             }
         }
     }
 
     pub fn draw_header(&mut self) {
         self.state.fg_color = HEADER_COLOR;
-        self.fill_rect(Rect::new(0, 0, WIDTH, HEADER_HEIGHT));
+        self.fill_rect(Rect::HEADER_CLIP);
     }
 
     pub fn buffer(&self) -> &[u32; BUFSZ] {
@@ -228,8 +224,11 @@ impl Canvas {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
-    pub x: u32,
-    pub y: u32,
+    // These are signed so you can do things like drawing circles and lines with parts off the
+    // left side of the screen (obviously they will be clipped, but the part that's on the screen
+    // should work properly).
+    pub x: i32,
+    pub y: i32,
 }
 
 impl Point {
@@ -247,11 +246,11 @@ impl Point {
 pub struct Rect(pub Point, pub Point);
 
 impl Rect {
-    pub const FULL_CLIP: Self = Rect::new(0, 0, WIDTH, HEIGHT);
-    pub const USER_CLIP: Self = Rect::new(0, HEADER_HEIGHT, WIDTH, HEIGHT);
-    pub const HEADER_CLIP: Self = Rect::new(0, 0, WIDTH, HEADER_HEIGHT);
+    pub const FULL_CLIP: Self = Rect::new(0, 0, WIDTH as i32, HEIGHT as i32);
+    pub const USER_CLIP: Self = Rect::new(0, HEADER_HEIGHT as i32, WIDTH as i32, HEIGHT as i32);
+    pub const HEADER_CLIP: Self = Rect::new(0, 0, WIDTH as i32, HEADER_HEIGHT as i32);
 
-    pub const fn new(mut x0: u32, mut y0: u32, mut x1: u32, mut y1: u32) -> Self {
+    pub const fn new(mut x0: i32, mut y0: i32, mut x1: i32, mut y1: i32) -> Self {
         if x0 > x1 {
             mem::swap(&mut x0, &mut x1);
         }
@@ -263,12 +262,7 @@ impl Rect {
     }
 
     pub fn from_sdk(x0: i32, y0: i32, x1: i32, y1: i32) -> Self {
-        let mut rect = Self::new(
-            i32::max(x0, 0) as u32,
-            i32::max(y0 + HEADER_HEIGHT as i32, 0) as u32,
-            i32::max(x1, 0) as u32,
-            i32::max(y1 + HEADER_HEIGHT as i32, 0) as u32,
-        );
+        let mut rect = Self::new(x0, y0 + HEADER_HEIGHT, x1, y1 + HEADER_HEIGHT);
         rect.1.x += 1;
         rect.1.y += 1;
         rect
