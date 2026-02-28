@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, rc::Rc};
+use std::{mem, num::NonZeroU32, rc::Rc};
 
 use anyhow::{Context, Result, anyhow};
 use fast_image_resize::{
@@ -6,7 +6,7 @@ use fast_image_resize::{
     images::{TypedImage, TypedImageRef},
     pixels::U8x4,
 };
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use softbuffer::Surface;
 use tracing::{debug, trace};
 use winit::{
@@ -21,30 +21,28 @@ use crate::{
     canvas::{BUFSZ, CANVAS, Canvas, HEIGHT, Rect, WIDTH},
 };
 
-static DISPLAY_BUFFER: Mutex<SimDisplayBuf> = Mutex::new(SimDisplayBuf::new());
+pub static DISPLAY: Mutex<SimDisplay> = Mutex::new(SimDisplay::new());
 const SIZE: LogicalSize<f64> = LogicalSize::new(480.0, 272.0);
+static FRAME_NOTIFY: Condvar = Condvar::new();
 
 /// A simulated VEX V5 display.
-pub struct SimDisplay {
+pub struct SimDisplayWindow {
     window: Rc<Window>,
     surface: Surface<OwnedDisplayHandle, Rc<Window>>,
-
-    /// Indicates whether redraws will automatically render the user canvas without calls to
-    /// [`vexDisplayRender`](crate::sdk::vexDisplayRender).
-    autorender: bool,
 
     /// Used for drawing the program header.
     ///
     /// This is effectively drawn on a separate layer from the default user canvas.
     header_canvas: Canvas,
 
-    /// Indicates whether the header canvas should be drawn to the display.
-    fullscreen: bool,
+    // A frame has been explicitly requested by the app; the next redraw should autorender the
+    // canvas, update the program header, notify vexDisplayRender callers, etc. instead of just
+    // scaling the previous rendered frame.
+    has_scheduled_frame: bool,
 }
 
-impl SimDisplay {
+impl SimDisplayWindow {
     pub fn open(event_loop: &ActiveEventLoop, context: &DisplayCtx) -> Result<Self> {
-
         debug!("Opening V5 display window");
 
         #[cfg(target_os = "macos")]
@@ -72,9 +70,8 @@ impl SimDisplay {
         Ok(Self {
             surface,
             window,
-            autorender: true,
             header_canvas: Canvas::new(),
-            fullscreen: false,
+            has_scheduled_frame: true,
         })
     }
 
@@ -123,11 +120,8 @@ impl SimDisplay {
         }
     }
 
-    pub fn set_autorender(&mut self, autorender: bool) {
-        self.autorender = autorender;
-    }
-
-    pub fn queue_redraw(&self) {
+    pub fn queue_redraw(&mut self) {
+        self.has_scheduled_frame = true;
         self.window.request_redraw();
     }
 
@@ -135,28 +129,23 @@ impl SimDisplay {
         self.window.id()
     }
 
-    pub fn render_user_canvas(&self, buf: &mut SimDisplayBuf) {
-        let canvas = CANVAS.lock();
-
-        let mask = if self.fullscreen {
-            Rect::FULL_CLIP
-        } else {
-            Rect::USER_CLIP
-        };
-        buf.blit_rect(canvas.buffer(), mask);
-    }
-
     /// Scale the display's contents to the size of the window, then write them to the framebuffer.
     pub fn redraw(&mut self) {
-        let mut sim_buffer = DISPLAY_BUFFER.lock();
+        let mut disp = DISPLAY.lock();
 
-        if self.autorender {
-            self.render_user_canvas(&mut sim_buffer);
-        }
+        let is_scheduled = mem::take(&mut self.has_scheduled_frame);
 
-        if !self.fullscreen {
-            self.header_canvas.draw_header();
-            sim_buffer.blit_rect(self.header_canvas.buffer(), Rect::HEADER_CLIP);
+        // Only do updates on 60fps frames to maintain hardware FPS simulation
+        if is_scheduled {
+            if disp.autorender {
+                let canvas = CANVAS.lock();
+                disp.render_user_canvas(&canvas);
+            }
+
+            if !disp.fullscreen {
+                self.header_canvas.draw_header();
+                disp.blit_rect(self.header_canvas.buffer(), Rect::HEADER_CLIP);
+            }
         }
 
         let mut framebuffer = self.surface.buffer_mut().unwrap();
@@ -166,14 +155,14 @@ impl SimDisplay {
         trace!(
             fb.width = width,
             fb.height = height,
-            autorender = self.autorender,
+            autorender = disp.autorender,
             "Drawing the VEX V5 display to framebuffer"
         );
 
         // Scale the contents to the window size so the entire thing is filled.
         // The destination of the scaled image is the framebuffer itself.
 
-        let buffer_pixels: &[U8x4] = bytemuck::must_cast_slice(sim_buffer.as_ref());
+        let buffer_pixels: &[U8x4] = bytemuck::must_cast_slice(disp.as_ref());
         let fb_pixels: &mut [U8x4] = bytemuck::must_cast_slice_mut(&mut framebuffer);
 
         let screen = TypedImageRef::new(WIDTH, HEIGHT, buffer_pixels).unwrap();
@@ -190,20 +179,41 @@ impl SimDisplay {
             )
             .unwrap();
 
+        // Only notify on 60fps frames so vexDisplayRender with bVsyncWait doesn't run too quickly.
+        if is_scheduled {
+            FRAME_NOTIFY.notify_all();
+        }
+
+        // Unlock after sending the frame notification because locking this mutex should ensure that
+        // any subsequent FRAME_NOTIFY notification includes the most recent changes to sim_buffer.
+        drop(disp);
+
         // Swap buffers.
         self.window.pre_present_notify();
         framebuffer.present().unwrap();
     }
 }
 
-/// The buffer for a simulated display.
-pub struct SimDisplayBuf {
+/// The shared state for a simulated display.
+pub struct SimDisplay {
     buffer: [u32; BUFSZ],
+
+    /// Indicates whether the header canvas should be hidden from the display, expanding the user
+    /// canvas mask to the full contents of the window.
+    fullscreen: bool,
+
+    /// Indicates whether redraws should automatically render the user canvas without calls to
+    /// [`vexDisplayRender`](crate::sdk::vexDisplayRender).
+    autorender: bool,
 }
 
-impl SimDisplayBuf {
+impl SimDisplay {
     pub const fn new() -> Self {
-        Self { buffer: [0; _] }
+        Self {
+            buffer: [0; _],
+            fullscreen: false,
+            autorender: true,
+        }
     }
 
     /// Copy a rectangle of pixels from the source onto the display.
@@ -213,9 +223,41 @@ impl SimDisplayBuf {
             self.buffer[idx] = source[idx];
         }
     }
+
+    pub fn render_user_canvas(&mut self, canvas: &Canvas) {
+        let mask = if self.fullscreen {
+            Rect::FULL_CLIP
+        } else {
+            Rect::USER_CLIP
+        };
+        self.blit_rect(canvas.buffer(), mask);
+    }
+
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.fullscreen = fullscreen;
+    }
+
+    pub fn set_autorender(&mut self, autorender: bool) {
+        self.autorender = autorender;
+    }
+
+    /// Runs a callback after the in-progress frame, then waits for the next frame to be committed.
+    ///
+    /// Any changes made to the display in `cb` are guaranteed to be acknowledged by the
+    /// window renderer by the time this function returns (but they might not be visible yet).
+    /// Changes made *before* `cb` will also be included, but then it's not guaranteed exactly which
+    /// frame after those changes this function is waiting for.
+    pub fn run_synced<R>(cb: impl FnOnce(&mut Self) -> R) -> R {
+        // Locking the display buffer essentially flushes out any in-progress frame that's operating
+        // on old data.
+        let mut frame = DISPLAY.lock();
+        let ret = cb(&mut frame);
+        FRAME_NOTIFY.wait(&mut frame);
+        ret
+    }
 }
 
-impl AsRef<[u32]> for SimDisplayBuf {
+impl AsRef<[u32]> for SimDisplay {
     fn as_ref(&self) -> &[u32] {
         &self.buffer
     }

@@ -31,14 +31,12 @@ use winit::{
 
 use crate::{
     canvas::{AUTORENDER, CANVAS, Canvas, HEADER_COLOR, HEADER_HEIGHT, Rect, WIDTH},
-    display::SimDisplay,
+    display::SimDisplayWindow,
 };
 
 type DisplayCtx = Context<OwnedDisplayHandle>;
 
 enum SimEvent {
-    Render,
-    SetAutoRender(bool),
 }
 
 static SIM_APP: OnceLock<EventLoopProxy<SimEvent>> = OnceLock::new();
@@ -60,7 +58,7 @@ pub fn run_simulator(run_app: impl FnOnce() + Send + 'static) -> Result<()> {
 }
 
 struct Simulator<E> {
-    sim_display: Option<SimDisplay>,
+    sim_display: Option<SimDisplayWindow>,
     context: DisplayCtx,
     entrypoint: Option<E>,
     last_frame_time: Option<Instant>,
@@ -92,7 +90,7 @@ impl<E> Simulator<E> {
 impl<E: FnOnce() + Send + 'static> ApplicationHandler<SimEvent> for Simulator<E> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.sim_display.is_none() {
-            match SimDisplay::open(event_loop, &self.context) {
+            match SimDisplayWindow::open(event_loop, &self.context) {
                 Ok(sim_display) => self.sim_display = Some(sim_display),
                 Err(error) => error!(%error, "Failed to open VEX V5 Display window"),
             }
@@ -119,7 +117,7 @@ impl<E: FnOnce() + Send + 'static> ApplicationHandler<SimEvent> for Simulator<E>
                     trace!(measured_period = ?now - last, "Frame time");
                 }
 
-                if let Some(d) = &self.sim_display {
+                if let Some(d) = &mut self.sim_display {
                     d.queue_redraw();
                 }
             }
@@ -137,21 +135,6 @@ impl<E: FnOnce() + Send + 'static> ApplicationHandler<SimEvent> for Simulator<E>
             && window_id == sim_display.window_id()
         {
             sim_display.handle_event(event_loop, event);
-        }
-    }
-
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: SimEvent) {
-        match event {
-            SimEvent::Render => {
-                if let Some(d) = &self.sim_display {
-                    d.queue_redraw();
-                }
-            }
-            SimEvent::SetAutoRender(autorender) => {
-                if let Some(d) = &mut self.sim_display {
-                    d.set_autorender(autorender);
-                }
-            }
         }
     }
 }

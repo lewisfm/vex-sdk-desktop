@@ -7,11 +7,11 @@ use std::{
 
 use line_drawing::BresenhamCircle;
 use parking_lot::Mutex;
-use tracing::{debug, trace};
+use tracing::{debug, trace, info};
 
 use crate::{
     SIM_APP, SimEvent,
-    display::{SimDisplay, SimDisplayBuf},
+    display::{SimDisplayWindow, SimDisplay},
 };
 
 pub const WIDTH: u32 = 480;
@@ -48,7 +48,7 @@ impl CanvasState {
 }
 
 pub struct Canvas {
-    back_buffer: [u32; BUFSZ],
+    buffer: [u32; BUFSZ],
     pub state: CanvasState,
     pub saved_state: CanvasState,
 }
@@ -62,7 +62,7 @@ impl Canvas {
         };
 
         Self {
-            back_buffer: [0; _],
+            buffer: [0; _],
             state,
             saved_state: state,
         }
@@ -82,13 +82,13 @@ impl Canvas {
         }
 
         let idx = point.y * WIDTH + point.x;
-        self.back_buffer[idx as usize] = self.state.fg_color;
+        self.buffer[idx as usize] = self.state.fg_color;
 
         trace!(color = %Hex(self.state.fg_color), ?point, "update pixel");
     }
 
     pub fn draw_horizontal_line(&mut self, x_range: RangeInclusive<u32>, y: u32) {
-        tracing::info!(?x_range, y, "horizontal line");
+        trace!(?x_range, y, "horizontal line");
 
         let clip = self.state.clip_region;
 
@@ -105,12 +105,12 @@ impl Canvas {
 
         for x in x_range {
             let idx = y * WIDTH + x;
-            self.back_buffer[idx as usize] = self.state.fg_color;
+            self.buffer[idx as usize] = self.state.fg_color;
         }
     }
 
     pub fn draw_vertical_line(&mut self, x: u32, y_range: RangeInclusive<u32>) {
-        tracing::info!(x, ?y_range, "vertical line");
+        trace!(x, ?y_range, "vertical line");
 
         let clip = self.state.clip_region;
 
@@ -127,7 +127,7 @@ impl Canvas {
 
         for y in y_range {
             let idx = y * WIDTH + x;
-            self.back_buffer[idx as usize] = self.state.fg_color;
+            self.buffer[idx as usize] = self.state.fg_color;
         }
     }
 
@@ -138,13 +138,15 @@ impl Canvas {
 
         for pixel in bounds.pixels() {
             let idx = pixel.y * WIDTH + pixel.x;
-            self.back_buffer[idx as usize] = self.state.fg_color;
+            self.buffer[idx as usize] = self.state.fg_color;
         }
     }
 
-    pub fn trace_rect(&mut self, mut bounds: Rect) {
-        let horizontal_lines = [bounds.0.y, bounds.1.y];
-        let vertical_lines = [bounds.0.x, bounds.1.x];
+    pub fn trace_rect(&mut self, bounds: Rect) {
+        trace!(color = %Hex(self.state.fg_color), ?bounds, "trace rect");
+
+        let horizontal_lines = [bounds.0.y, bounds.1.y - 1];
+        let vertical_lines = [bounds.0.x, bounds.1.x - 1];
 
         for y in horizontal_lines {
             self.draw_horizontal_line(bounds.0.x..=(bounds.1.x - 1), y);
@@ -172,12 +174,15 @@ impl Canvas {
         let mut lines = vec![(center.x, center.x); num_lines as usize];
 
         for (dx, i) in BresenhamCircle::new(0, radius as i32, radius as i32) {
-            tracing::info!(dx, i, radius, "circle pixel");
-            let x = (center.x as i32 + dx) as u32;
+            let x = (center.x as i32 + dx).max(0) as u32;
 
+            // The tops and bottoms of circles have several points on the same line, so only record
+            // the leftmost or rightmost point for our horizontal line.
             if dx < 0 {
-                lines[i as usize].0 = x;
-            } else {
+                if x < lines[i as usize].0 {
+                    lines[i as usize].0 = x;
+                }
+            } else if x > lines[i as usize].1 {
                 lines[i as usize].1 = x;
             }
         }
@@ -189,23 +194,35 @@ impl Canvas {
         }
     }
 
+    pub fn trace_circle(&mut self, center: Point, radius: u32) {
+        trace!(color = %Hex(self.state.fg_color), ?center, radius, "trace circle");
+
+        // Special case to treat radius zero as a set_pixel call since using Bresenham would just
+        // give us an empty iterator.
+        if radius == 0 {
+            self.set_pixel(center);
+        }
+
+        let clip = self.state.clip_region;
+
+        for (x, y) in BresenhamCircle::new(center.x as i32, center.y as i32, radius as i32) {
+            if let Ok(x) = x.try_into()
+                && let Ok(y) = y.try_into()
+                && (Point { x, y }).is_inside(&clip)
+            {
+                let idx = y * WIDTH + x;
+                self.buffer[idx as usize] = self.state.fg_color;
+            }
+        }
+    }
+
     pub fn draw_header(&mut self) {
         self.state.fg_color = HEADER_COLOR;
         self.fill_rect(Rect::new(0, 0, WIDTH, HEADER_HEIGHT));
     }
 
-    /// Signal the render thread to show the updated canvas.
-    pub fn dispatch_render(&mut self) {
-        trace!("Dispatching render");
-
-        _ = SIM_APP
-            .get()
-            .expect("Attempted to dispatch render without an active render thread")
-            .send_event(SimEvent::Render);
-    }
-
     pub fn buffer(&self) -> &[u32; BUFSZ] {
-        &self.back_buffer
+        &self.buffer
     }
 }
 
@@ -280,10 +297,10 @@ impl std::fmt::Display for Hex {
 /// # Panics
 ///
 /// Panics if `start` < `end` for either `source` or `region`.
-fn clamp_range(
-    source: RangeInclusive<u32>,
-    region: RangeInclusive<u32>,
-) -> Option<RangeInclusive<u32>> {
+fn clamp_range<T: PartialOrd + Copy>(
+    source: RangeInclusive<T>,
+    region: RangeInclusive<T>,
+) -> Option<RangeInclusive<T>> {
     assert!(source.start() <= source.end());
     assert!(region.start() <= region.end());
 
@@ -297,7 +314,7 @@ fn clamp_range(
         return None;
     }
 
-    if end >= region_end {
+    if end > region_end {
         end = region_end;
     }
     if begin < region_begin {

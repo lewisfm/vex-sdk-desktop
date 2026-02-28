@@ -1,12 +1,14 @@
 //! Brain Display
 
 use core::ffi::{VaList, c_char};
+use tracing::trace;
 
 pub use vex_sdk::v5_image;
 
 use crate::{
     SIM_APP, SimEvent,
     canvas::{CANVAS, HEADER_HEIGHT, Point, Rect},
+    display::{DISPLAY, SimDisplay},
 };
 
 #[unsafe(no_mangle)]
@@ -40,22 +42,32 @@ pub extern "C" fn vexDisplayCopyRect(
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayPixelSet(x: u32, y: u32) {
     let mut canvas = CANVAS.lock();
-    canvas.set_pixel(Point { x, y });
+    canvas.set_pixel(Point {
+        x,
+        y: y + HEADER_HEIGHT,
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayPixelClear(x: u32, y: u32) {
     let mut canvas = CANVAS.lock();
     canvas.state.swap_colors();
-    canvas.set_pixel(Point { x, y });
+    canvas.set_pixel(Point {
+        x,
+        y: y + HEADER_HEIGHT,
+    });
     canvas.state.swap_colors();
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayLineDraw(x1: i32, y1: i32, x2: i32, y2: i32) {}
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayLineClear(x1: i32, y1: i32, x2: i32, y2: i32) {}
+
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayRectDraw(x1: i32, y1: i32, x2: i32, y2: i32) {}
+pub extern "C" fn vexDisplayRectDraw(x1: i32, y1: i32, x2: i32, y2: i32) {
+    let mut canvas = CANVAS.lock();
+    canvas.trace_rect(Rect::from_sdk(x1, y1, x2, y2));
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayRectClear(x1: i32, y1: i32, x2: i32, y2: i32) {
@@ -72,14 +84,25 @@ pub extern "C" fn vexDisplayRectFill(x1: i32, y1: i32, x2: i32, y2: i32) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayCircleDraw(xc: i32, yc: i32, radius: i32) {}
+pub extern "C" fn vexDisplayCircleDraw(xc: i32, yc: i32, radius: i32) {
+    let mut canvas = CANVAS.lock();
+
+    let point = Point {
+        x: xc.max(0) as u32,
+        y: yc.max(0) as u32 + HEADER_HEIGHT,
+    };
+    canvas.trace_circle(point, radius.max(0) as u32);
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayCircleClear(xc: i32, yc: i32, radius: i32) {
     let mut canvas = CANVAS.lock();
     canvas.state.swap_colors();
 
-    let point = Point { x: xc.max(0) as u32, y: yc.max(0) as u32 };
+    let point = Point {
+        x: xc.max(0) as u32,
+        y: yc.max(0) as u32 + HEADER_HEIGHT,
+    };
     canvas.fill_circle(point, radius.max(0) as u32);
 
     canvas.state.swap_colors();
@@ -89,7 +112,10 @@ pub extern "C" fn vexDisplayCircleClear(xc: i32, yc: i32, radius: i32) {
 pub extern "C" fn vexDisplayCircleFill(xc: i32, yc: i32, radius: i32) {
     let mut canvas = CANVAS.lock();
 
-    let point = Point { x: xc.max(0) as u32, y: yc.max(0) as u32 };
+    let point = Point {
+        x: xc.max(0) as u32,
+        y: yc.max(0) as u32 + HEADER_HEIGHT,
+    };
     canvas.fill_circle(point, radius.max(0) as u32);
 }
 
@@ -123,10 +149,33 @@ pub extern "C" fn vexDisplayPenSizeGet() -> u32 {
 pub extern "C" fn vexDisplayClipRegionSet(x1: i32, y1: i32, x2: i32, y2: i32) {}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayRender(bVsyncWait: bool, bRunScheduler: bool) {}
+pub extern "C" fn vexDisplayRender(bVsyncWait: bool, bRunScheduler: bool) {
+    trace!("Dispatching render");
+
+    let app = SIM_APP
+        .get()
+        .expect("Attempted to dispatch render without an active render thread");
+
+    let do_render = |display: &mut SimDisplay| {
+        display.set_autorender(false);
+        display.render_user_canvas(&CANVAS.lock());
+        // We do not send an event to the renderer telling it to render because that could
+        // potentially cause render speeds of more than 60fps which is not true to the V5 hardware.
+    };
+
+    if bVsyncWait {
+        SimDisplay::run_synced(do_render);
+    } else {
+        do_render(&mut DISPLAY.lock());
+    }
+}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayDoubleBufferDisable() {}
+pub extern "C" fn vexDisplayDoubleBufferDisable() {
+    let mut display = DISPLAY.lock();
+    display.set_autorender(true);
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayClipRegionSetWithIndex(index: i32, x1: i32, y1: i32, x2: i32, y2: i32) {
 }
