@@ -59,8 +59,10 @@ fn main() {
             );
         }
 
-        let string = c"Vex V5!";
+        let string = c"Vex V6!";
         unsafe {
+            // vexDisplayTextSize(1, 1);
+            vexDisplayPixelSet(105, 180);
             vexDisplayPrintf(105, 180, 0, string.as_ptr());
         }
 

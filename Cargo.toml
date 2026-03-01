@@ -14,7 +14,6 @@ softbuffer = "0.4.8"
 tracing = "0.1.44"
 vex-sdk = "0.28.0"
 winit = "0.30.12"
-embedded-graphics = { version = "0.8.2", default-features = false }
 font-kit = { version = "0.14.3", default-features = false, features = [
     "loader-freetype",
 ], git = "https://github.com/servo/font-kit" }
@@ -36,6 +35,7 @@ objc2-core-graphics = { version = "0.3.2", features = [
 ] }
 
 [dev-dependencies]
+embedded-graphics = { version = "0.8.2", default-features = false }
 tinybmp = "0.7.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 vexide = { version = "0.8.0", features = ["full"] }

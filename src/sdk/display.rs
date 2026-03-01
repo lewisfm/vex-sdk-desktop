@@ -155,7 +155,9 @@ pub extern "C" fn vexDisplayCircleFill(xc: i32, yc: i32, radius: i32) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn vexDisplayTextSize(n: u32, d: u32) {}
+pub extern "C" fn vexDisplayTextSize(n: u32, d: u32) {
+    CANVAS.lock().set_font_scale(n, d);
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayFontNamedSet(pFontName: *const c_char) {}
 

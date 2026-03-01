@@ -6,6 +6,10 @@ use std::{
 };
 
 use color::{ColorSpaceTag, DynamicColor, HueDirection, OpaqueColor, PremulRgba8, Srgb};
+use fast_image_resize::{
+    images::{TypedCroppedImageMut, TypedImage, TypedImageRef},
+    pixels::U8,
+};
 use font_kit::{
     canvas::{Canvas as FontCanvas, Format, RasterizationOptions},
     hinting::HintingOptions,
@@ -19,7 +23,7 @@ use pathfinder_geometry::{
 };
 use tracing::trace;
 
-use crate::canvas::font::FONTS;
+use crate::canvas::font::{FONTS, PreRenderedFont};
 
 mod font;
 
@@ -35,7 +39,7 @@ pub const HEADER_COLOR: u32 = 0x00_99_CC;
 /// The canvas instance used by user code.
 pub static CANVAS: LazyLock<Mutex<Canvas>> = LazyLock::new(|| Mutex::new(Canvas::new()));
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct CanvasState {
     pub fg_color: u32,
     pub bg_color: u32,
@@ -43,7 +47,7 @@ pub struct CanvasState {
     // `vexDisplayPenSizeGet`.
     pub pen_size: u32,
     clip_region: Rect,
-    font_name: &'static str,
+    font: Arc<PreRenderedFont>,
     /// Numerator and denominator of post-render scaling of the font.
     pub font_scale: (u32, u32),
 }
@@ -63,15 +67,18 @@ impl CanvasState {
     }
 
     pub fn set_named_font(&mut self, name: &str) {
-        if let Some((name, _, _)) = FONTS.with(|f| f.get(name)) {
-            self.font_name = name;
+        if let Some(font) = FONTS.get(name) {
+            self.font = font;
         }
     }
 }
 
 pub struct Canvas {
+    /// Primary image buffer.
     buffer: Box<[u32; BUFSZ]>,
-    font_buffer: FontCanvas,
+    /// Scratch buffer for planning text writes before compositing them onto the main buffer. Holds
+    /// opacity values for the text.
+    text_buffer: Box<[u8; BUFSZ]>,
     pub state: CanvasState,
     pub saved_state: CanvasState,
 }
@@ -83,25 +90,25 @@ impl Canvas {
             bg_color: DEFAULT_BG_COLOR,
             clip_region: Rect::FULL_CLIP,
             pen_size: 1,
-            font_name: "monospace",
+            font: FONTS.get("monospace").unwrap(),
             font_scale: (1, 3),
         };
 
         Self {
             // Allocate directly on the heap to prevent a stack overflow.
             buffer: vec![0u32; BUFSZ].into_boxed_slice().try_into().unwrap(),
-            font_buffer: FontCanvas::new(Vector2I::new(WIDTH as i32, HEIGHT as i32), Format::A8),
+            text_buffer: vec![0u8; BUFSZ].into_boxed_slice().try_into().unwrap(),
+            saved_state: state.clone(),
             state,
-            saved_state: state,
         }
     }
 
     pub fn save(&mut self) {
-        self.saved_state = self.state;
+        self.saved_state = self.state.clone();
     }
 
     pub fn restore(&mut self) {
-        self.state = self.saved_state;
+        self.state = self.saved_state.clone();
     }
 
     pub fn set_pixel(&mut self, point: Point) {
@@ -262,51 +269,50 @@ impl Canvas {
         }
     }
 
-    pub fn draw_string(&mut self, mut origin: Point, string: &str) {
-        let (font_name, font_size, font) = FONTS.with(|f| f.get(self.state.font_name)).unwrap();
+    pub fn draw_string(&mut self, origin: Point, string: &str) {
+        let font = self.state.font.clone();
+        trace!(?string, ?origin, color = %Hex(self.state.fg_color), font_name = ?font.name(), "Rendering string");
 
-        trace!(?string, ?origin, color = %Hex(self.state.fg_color), ?font_name, "Rendering string");
+        // self.set_pixel(origin);
 
-        let replacement_glyph_id = font
-            .glyph_for_char('.')
-            .expect("Font has '.' character as fallback");
+        let (numerator, denominator) = self.state.font_scale;
+        let cap_height = font.cap_height(numerator, denominator);
 
-        let metrics = font.metrics();
-        let scale = font_size / metrics.units_per_em as f32;
+        let mut translation = origin;
 
-        // Rasterize the pixels
-        self.font_buffer.pixels.fill(0);
-        let mut translation =
-            Vector2F::new(origin.x as f32, origin.y as f32 + metrics.cap_height * scale);
+        self.text_buffer.fill(0);
+        let mut text_destination: TypedImage<U8> =
+            TypedImage::from_buffer(WIDTH, HEIGHT, &mut *self.text_buffer).unwrap();
 
+        // Render each character at the desired size.
         for character in string.chars() {
-            let glyph_id = font
-                .glyph_for_char(character)
-                .unwrap_or(replacement_glyph_id);
+            let glyph = font.glyph_for_char(character);
+            let dims = glyph.scaled_bounds(numerator, denominator);
 
-            trace!(?character, ?glyph_id, ?translation, "Drawing character");
+            // Offset the destination of the next character to a correctly-scaled rectangle.
+            let left = (translation.x + dims.origin_x()) as u32;
+            let top = (translation.y + dims.origin_y()) as u32 + cap_height;
+            let width = dims.width() as u32;
+            let height = dims.height() as u32;
 
-            font.rasterize_glyph(
-                &mut self.font_buffer,
-                glyph_id,
-                font_size,
-                Transform2F::from_translation(translation),
-                HintingOptions::None,
-                RasterizationOptions::GrayscaleAa,
-            )
-            .expect("glyph exists, platform succeeds");
+            let mut glyph_destination =
+                TypedCroppedImageMut::from_ref(&mut text_destination, left, top, width, height)
+                    .unwrap();
 
-            translation += font.advance(glyph_id).unwrap() * scale;
+            // Render it in that rectangle in the text rendering buffer.
+            glyph.render(&mut glyph_destination);
+
+            translation.x += glyph.advance(numerator, denominator);
         }
 
         let [_, cr, cg, cb] = self.state.fg_color.to_be_bytes();
 
         // Copy rasterized pixels onto canvas
-        for (i, &opacity) in self.font_buffer.pixels.iter().enumerate() {
+        for (i, &opacity) in self.text_buffer.iter().enumerate() {
             let destination = &mut self.buffer[i];
 
             let [_, r, g, b] = destination.to_be_bytes();
-            let transparency = 255 - opacity as u32;
+            let transparency = (255 - opacity) as u32;
 
             // Alpha is 0..=255 instead of 0..=1 so we need to divide by 255 to keep the same scale.
             // This is done at the end to make the integer multiplication more accurate.
@@ -316,6 +322,10 @@ impl Canvas {
 
             *destination = u32::from_be_bytes([0, r as u8, g as u8, b as u8]);
         }
+    }
+
+    pub fn set_font_scale(&mut self, numerator: u32, denominator: u32) {
+        self.state.font_scale = (numerator, denominator);
     }
 
     pub fn draw_header(&mut self) {
