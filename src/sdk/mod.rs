@@ -31,6 +31,8 @@ pub mod task;
 pub mod touch;
 pub mod vision;
 
+use std::ffi::{VaList, c_char};
+
 pub use abs_enc::*;
 pub use adi::*;
 pub use ai_vision::*;
@@ -58,3 +60,12 @@ pub use system::*;
 pub use task::*;
 pub use touch::*;
 pub use vision::*;
+
+unsafe extern "C" {
+    unsafe fn vsnprintf(
+        buffer: *mut c_char,
+        bufsz: usize,
+        format: *const c_char,
+        vlist: VaList<'_>,
+    );
+}

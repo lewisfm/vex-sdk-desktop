@@ -1,7 +1,5 @@
 use std::{
-    f64::consts::{PI, TAU},
-    thread,
-    time::Duration,
+    f64::consts::{PI, TAU}, process::exit, thread, time::Duration
 };
 
 use embedded_graphics::{
@@ -61,6 +59,11 @@ fn main() {
             );
         }
 
+        let string = c"Vex V5!";
+        unsafe {
+            vexDisplayPrintf(105, 180, 0, string.as_ptr());
+        }
+
         let mut velocity = 0.0;
         let mut position = -50.0;
         loop {
@@ -76,7 +79,7 @@ fn main() {
 
             let angle = (position / 50.0 + 1.0) * PI;
             let (y, x) = angle.sin_cos();
-            println!("({x}, {y})");
+            // println!("({x}, {y})");
 
             let x1 = 250 + (x * 20.0) as i32;
             let x2 = 250 - (x * 20.0) as i32;
@@ -87,7 +90,7 @@ fn main() {
             vexDisplayForegroundColor(0xFF_FF_FF);
             vexDisplayCircleFill(250, 100, 20);
             vexDisplayForegroundColor(0x00_00_00);
-            println!("{:?}", (x1, y1, x2, y2));
+            // println!("{:?}", (x1, y1, x2, y2));
             vexDisplayLineDraw(x1, y1, x2, y2);
 
             vexDisplayRender(true, false);

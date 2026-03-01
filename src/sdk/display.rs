@@ -1,6 +1,7 @@
 //! Brain Display
 
 use core::ffi::{VaList, c_char};
+use std::ffi::{CStr, CString};
 use tracing::trace;
 
 pub use vex_sdk::v5_image;
@@ -245,14 +246,31 @@ pub extern "C" fn vexImagePngRead(
 ) -> u32 {
     Default::default()
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vexDisplayVPrintf(
     xpos: i32,
     ypos: i32,
     bOpaque: i32,
     format: *const c_char,
-    mut args: VaList<'_>,
+    args: VaList<'_>,
 ) {
+    let mut buffer: [u8; 256] = [0; _];
+    unsafe {
+        super::vsnprintf(buffer.as_mut_ptr().cast(), buffer.len(), format, args);
+    }
+
+    let c_str = CStr::from_bytes_until_nul(&buffer).unwrap();
+    let string = c_str.to_string_lossy();
+
+    let mut canvas = CANVAS.lock();
+    canvas.draw_string(
+        Point {
+            x: xpos,
+            y: ypos + HEADER_HEIGHT,
+        },
+        string.as_ref(),
+    );
 }
 
 #[unsafe(no_mangle)]

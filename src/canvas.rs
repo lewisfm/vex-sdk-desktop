@@ -2,11 +2,26 @@ use std::{
     fmt::{self, Formatter},
     mem,
     ops::RangeInclusive,
+    sync::{Arc, LazyLock},
 };
 
+use color::{ColorSpaceTag, DynamicColor, HueDirection, OpaqueColor, PremulRgba8, Srgb};
+use font_kit::{
+    canvas::{Canvas as FontCanvas, Format, RasterizationOptions},
+    hinting::HintingOptions,
+    loaders::freetype::Font,
+};
 use line_drawing::{Bresenham, BresenhamCircle};
 use parking_lot::Mutex;
+use pathfinder_geometry::{
+    transform2d::Transform2F,
+    vector::{Vector2F, Vector2I},
+};
 use tracing::trace;
+
+use crate::canvas::font::FONTS;
+
+mod font;
 
 pub const WIDTH: u32 = 480;
 pub const HEIGHT: u32 = 272;
@@ -18,7 +33,7 @@ pub const DEFAULT_FG_COLOR: u32 = 0xFF_FF_FF;
 pub const HEADER_COLOR: u32 = 0x00_99_CC;
 
 /// The canvas instance used by user code.
-pub static CANVAS: Mutex<Canvas> = Mutex::new(Canvas::new());
+pub static CANVAS: LazyLock<Mutex<Canvas>> = LazyLock::new(|| Mutex::new(Canvas::new()));
 
 #[derive(Debug, Clone, Copy)]
 pub struct CanvasState {
@@ -28,6 +43,9 @@ pub struct CanvasState {
     // `vexDisplayPenSizeGet`.
     pub pen_size: u32,
     clip_region: Rect,
+    font_name: &'static str,
+    /// Numerator and denominator of post-render scaling of the font.
+    pub font_scale: (u32, u32),
 }
 
 impl CanvasState {
@@ -43,25 +61,36 @@ impl CanvasState {
     pub fn clip_region(&self) -> Rect {
         self.clip_region
     }
+
+    pub fn set_named_font(&mut self, name: &str) {
+        if let Some((name, _, _)) = FONTS.with(|f| f.get(name)) {
+            self.font_name = name;
+        }
+    }
 }
 
 pub struct Canvas {
-    buffer: [u32; BUFSZ],
+    buffer: Box<[u32; BUFSZ]>,
+    font_buffer: FontCanvas,
     pub state: CanvasState,
     pub saved_state: CanvasState,
 }
 
 impl Canvas {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         let state = CanvasState {
             fg_color: DEFAULT_FG_COLOR,
             bg_color: DEFAULT_BG_COLOR,
             clip_region: Rect::FULL_CLIP,
             pen_size: 1,
+            font_name: "monospace",
+            font_scale: (1, 3),
         };
 
         Self {
-            buffer: [0; _],
+            // Allocate directly on the heap to prevent a stack overflow.
+            buffer: vec![0u32; BUFSZ].into_boxed_slice().try_into().unwrap(),
+            font_buffer: FontCanvas::new(Vector2I::new(WIDTH as i32, HEIGHT as i32), Format::A8),
             state,
             saved_state: state,
         }
@@ -230,6 +259,62 @@ impl Canvas {
                 let pixel = unsafe { source.add(source_idx).read() };
                 self.buffer[dest_idx as usize] = pixel;
             }
+        }
+    }
+
+    pub fn draw_string(&mut self, mut origin: Point, string: &str) {
+        let (font_name, font_size, font) = FONTS.with(|f| f.get(self.state.font_name)).unwrap();
+
+        trace!(?string, ?origin, color = %Hex(self.state.fg_color), ?font_name, "Rendering string");
+
+        let replacement_glyph_id = font
+            .glyph_for_char('.')
+            .expect("Font has '.' character as fallback");
+
+        let metrics = font.metrics();
+        let scale = font_size / metrics.units_per_em as f32;
+
+        // Rasterize the pixels
+        self.font_buffer.pixels.fill(0);
+        let mut translation =
+            Vector2F::new(origin.x as f32, origin.y as f32 + metrics.cap_height * scale);
+
+        for character in string.chars() {
+            let glyph_id = font
+                .glyph_for_char(character)
+                .unwrap_or(replacement_glyph_id);
+
+            trace!(?character, ?glyph_id, ?translation, "Drawing character");
+
+            font.rasterize_glyph(
+                &mut self.font_buffer,
+                glyph_id,
+                font_size,
+                Transform2F::from_translation(translation),
+                HintingOptions::None,
+                RasterizationOptions::GrayscaleAa,
+            )
+            .expect("glyph exists, platform succeeds");
+
+            translation += font.advance(glyph_id).unwrap() * scale;
+        }
+
+        let [_, cr, cg, cb] = self.state.fg_color.to_be_bytes();
+
+        // Copy rasterized pixels onto canvas
+        for (i, &opacity) in self.font_buffer.pixels.iter().enumerate() {
+            let destination = &mut self.buffer[i];
+
+            let [_, r, g, b] = destination.to_be_bytes();
+            let transparency = 255 - opacity as u32;
+
+            // Alpha is 0..=255 instead of 0..=1 so we need to divide by 255 to keep the same scale.
+            // This is done at the end to make the integer multiplication more accurate.
+            let r = ((r as u32 * transparency) + (cr as u32 * opacity as u32)) / 255;
+            let g = ((g as u32 * transparency) + (cg as u32 * opacity as u32)) / 255;
+            let b = ((b as u32 * transparency) + (cb as u32 * opacity as u32)) / 255;
+
+            *destination = u32::from_be_bytes([0, r as u8, g as u8, b as u8]);
         }
     }
 

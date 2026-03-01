@@ -15,13 +15,25 @@ tracing = "0.1.44"
 vex-sdk = "0.28.0"
 winit = "0.30.12"
 embedded-graphics = { version = "0.8.2", default-features = false }
+font-kit = { version = "0.14.3", default-features = false, features = [
+    "loader-freetype",
+], git = "https://github.com/servo/font-kit" }
+pathfinder_geometry = "0.5.1"
+color = "0.3.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3.1"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = ["NSThread"] }
-objc2-app-kit = { version = "0.3.2", features = ["objc2-core-graphics", "NSImage", "NSView"] }
-objc2-core-graphics = { version = "0.3.2", features = ["CGDataProvider", "CGColorSpace"] }
+objc2-app-kit = { version = "0.3.2", features = [
+    "objc2-core-graphics",
+    "NSImage",
+    "NSView",
+] }
+objc2-core-graphics = { version = "0.3.2", features = [
+    "CGDataProvider",
+    "CGColorSpace",
+] }
 
 [dev-dependencies]
 tinybmp = "0.7.0"
