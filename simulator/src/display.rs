@@ -290,6 +290,7 @@ impl SimDisplay {
             buffer: [0; _],
             fullscreen: false,
             autorender: true,
+            mouse_coords: Point::new(0, 0),
             mouse_down: false,
             touch: V5_TouchStatus {
                 lastEvent: V5_TouchEvent::kTouchEventRelease,
