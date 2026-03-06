@@ -425,6 +425,12 @@ impl Canvas {
     }
 }
 
+impl Default for Canvas {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
     // These are signed so you can do things like drawing circles and lines with parts off the

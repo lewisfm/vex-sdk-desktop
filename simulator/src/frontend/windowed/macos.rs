@@ -17,7 +17,8 @@ use winit::{
 
 use crate::canvas::{HEIGHT, WIDTH};
 
-static APP_ICON_PNG: &[u8] = include_bytes!("../assets/mac/icon.png");
+static APP_ICON_PNG: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/mac/icon.png"));
 
 /// Performs one-time initialization (sets the app icon).
 pub fn init_app() {

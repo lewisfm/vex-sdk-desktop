@@ -13,7 +13,6 @@ use tracing::trace;
 pub use vex_sdk::v5_image;
 
 use crate::{
-    SIM_APP, SimEvent,
     canvas::{CANVAS, Canvas, HEADER_HEIGHT, Point, Rect, WIDTH},
     display::{DISPLAY, SimDisplay},
 };
@@ -297,12 +296,8 @@ pub extern "C" fn vexDisplayClipRegionSet(x1: i32, y1: i32, x2: i32, y2: i32) {
 pub extern "C" fn vexDisplayRender(bVsyncWait: bool, bRunScheduler: bool) {
     trace!("Dispatching render");
 
-    let app = SIM_APP
-        .get()
-        .expect("Attempted to dispatch render without an active render thread");
-
     let do_render = |display: &mut SimDisplay| {
-        display.set_autorender(false);
+        display.autorender = false;
         display.render_user_canvas(&CANVAS.lock());
         // We do not send an event to the renderer telling it to render because that could
         // potentially cause render speeds of more than 60fps which is not true to the V5 hardware.
@@ -319,7 +314,7 @@ pub extern "C" fn vexDisplayRender(bVsyncWait: bool, bRunScheduler: bool) {
 #[unsafe(no_mangle)]
 pub extern "C" fn vexDisplayDoubleBufferDisable() {
     let mut display = DISPLAY.lock();
-    display.set_autorender(true);
+    display.autorender = true;
 }
 
 /// Unimplemented.

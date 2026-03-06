@@ -4,13 +4,13 @@ use image::{ImageFormat, ImageReader};
 
 use crate::canvas::{Canvas, Point, Rect};
 
-pub struct Image {
+pub struct SimImage {
     pixels: Vec<u32>,
     width: u32,
     height: u32,
 }
 
-impl Image {
+impl SimImage {
     pub fn from_png(png_bytes: &[u8]) -> Self {
         let img = ImageReader::with_format(Cursor::new(png_bytes), ImageFormat::Png)
             .decode()

@@ -5,7 +5,7 @@ publish = false
 edition = "2024"
 
 [workspace]
-members = ["simulator"]
+members = ["ipc", "viewer", "simulator"]
 
 [dev-dependencies]
 embedded-graphics = { version = "0.8.2", default-features = false }
