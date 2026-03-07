@@ -40,6 +40,16 @@ const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(480.0, 272.0);
 
 type DisplayCtx = Context<OwnedDisplayHandle>;
 
+pub fn start(name: &str, on_ready: impl FnOnce() + Send + 'static) -> Result<()> {
+    let event_loop = EventLoop::with_user_event().build().unwrap();
+
+    let display = event_loop.owned_display_handle();
+    let mut simulator = SimulatorApp::new(name.to_string(), display, on_ready)?;
+    event_loop.run_app(&mut simulator)?;
+
+    Ok(())
+}
+
 pub struct SimulatorApp<E> {
     sim_display: Option<SimDisplayWindow>,
     context: DisplayCtx,
@@ -49,16 +59,6 @@ pub struct SimulatorApp<E> {
 }
 
 impl<E: FnOnce() + Send + 'static> SimulatorApp<E> {
-    pub fn start(name: String, on_ready: E) -> Result<()> {
-        let event_loop = EventLoop::with_user_event().build().unwrap();
-
-        let display = event_loop.owned_display_handle();
-        let mut simulator = SimulatorApp::new(name, display, on_ready)?;
-        event_loop.run_app(&mut simulator)?;
-
-        Ok(())
-    }
-
     fn new(name: String, display: OwnedDisplayHandle, on_ready: E) -> Result<Self> {
         let context = DisplayCtx::new(display)
             .map_err(|e| anyhow!(e.to_string()))

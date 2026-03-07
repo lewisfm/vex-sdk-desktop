@@ -2,6 +2,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::path::Path;
+#[cfg(not(feature = "windowed"))]
+use std::sync::Arc;
+
+#[cfg(not(feature = "windowed"))]
+use roboscope_ipc::SimServices;
 
 mod canvas;
 mod config;
@@ -21,8 +26,8 @@ pub fn run_simulator(entrypoint: impl FnOnce() + Send + 'static) -> anyhow::Resu
         .and_then(|str| str.to_str())
         .unwrap_or(&path);
 
-    // frontend::windowed::SimulatorApp::start(exe_name.to_string(), entrypoint)?;
-    frontend::ipc::start(exe_name)?;
+
+    frontend::start(exe_name, entrypoint)?;
 
     Ok(())
 }

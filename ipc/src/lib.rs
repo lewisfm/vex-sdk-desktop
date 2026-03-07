@@ -12,6 +12,9 @@ use iceoryx2::{port::publisher::Publisher, prelude::*};
 
 use crate::error::{RoboscopeIpcError, SimResult};
 
+#[cfg(feature = "thread-safe")]
+use ipc_threadsafe as ipc;
+
 pub type PubSubFactory<T> =
     iceoryx2::service::port_factory::publish_subscribe::PortFactory<ipc::Service, T, ()>;
 pub type Subscriber<T> =
@@ -32,11 +35,10 @@ pub const DISPLAY_BUF_SIZE: usize = DISPLAY_WIDTH as usize * DISPLAY_HEIGHT as u
 
 #[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default)]
 #[repr(C)]
-pub struct PhysicsSimCapture {
-    pub device_snapshots: [DeviceSnapshot; SMART_DEVICES_COUNT],
-}
+pub struct DeviceReadings(pub [DeviceSnapshot; SMART_DEVICES_COUNT]);
 
 #[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default, From, TryInto)]
+#[try_into(owned, ref, ref_mut)]
 #[repr(C)]
 pub enum DeviceSnapshot {
     #[default]
@@ -56,9 +58,7 @@ pub struct DistanceSnapshot {
 
 #[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default)]
 #[repr(C)]
-pub struct RobotOutputs {
-    pub device_commands: [DeviceCommand; SMART_DEVICES_COUNT],
-}
+pub struct RobotOutputs(pub [DeviceCommand; SMART_DEVICES_COUNT]);
 
 #[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default, From, TryInto)]
 #[repr(C)]
@@ -76,7 +76,7 @@ pub struct DisplayFrame {
 
 #[derive(Debug)]
 pub struct SimServices {
-    node: Node<ipc::Service>,
+    pub node: Node<ipc::Service>,
 }
 
 impl SimServices {
@@ -111,20 +111,20 @@ impl SimServices {
         self.pub_sub("vexide/roboscope/display_frames")
     }
 
-    fn robot_outputs(&self) -> SimResult<PubSubFactory<RobotOutputs>> {
-        self.pub_sub("vexide/roboscope/robot_outputs")
+    pub fn device_cmds(&self) -> SimResult<PubSubFactory<RobotOutputs>> {
+        self.pub_sub("vexide/roboscope/device_cmds")
     }
 
-    fn physics_captures(&self) -> SimResult<PubSubFactory<PhysicsSimCapture>> {
-        self.pub_sub("vexide/roboscope/physics_captures")
+    pub fn device_readings(&self) -> SimResult<PubSubFactory<DeviceReadings>> {
+        self.pub_sub("vexide/roboscope/device_readings")
     }
 
-    pub fn publish_physics(
+    pub fn publish_device_readings(
         &self,
-        mut physics_sim: impl FnMut(Option<&RobotOutputs>) -> PhysicsSimCapture,
+        mut physics_sim: impl FnMut(Option<&RobotOutputs>) -> DeviceReadings,
     ) -> SimResult<()> {
-        let robot_subscriber = self.robot_outputs()?.subscriber_builder().create()?;
-        let captures = self.physics_captures()?.publisher_builder().create()?;
+        let robot_subscriber = self.device_cmds()?.subscriber_builder().create()?;
+        let captures = self.device_readings()?.publisher_builder().create()?;
 
         while self.node.wait(PHYSICS_UPDATE_PERIOD).is_ok() {
             let robot_outputs = robot_subscriber.receive()?;

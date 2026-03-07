@@ -2768,6 +2768,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "cfg-if",
  "derive_more",
  "dispatch2",
  "fast_image_resize",
