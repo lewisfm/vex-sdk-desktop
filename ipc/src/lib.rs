@@ -21,6 +21,7 @@ pub type Subscriber<T> =
     iceoryx2::port::subscriber::Subscriber<ipc::Service, T, ()>;
 pub type Sample<T> =
     iceoryx2::sample::Sample<ipc::Service, T, ()>;
+pub use iceoryx2::config::Config;
 
 pub mod error;
 
@@ -53,7 +54,7 @@ pub struct GenericSnapshot {
     pub value: i32,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend)]
 #[repr(C)]
 pub struct DistanceSnapshot {
     pub distance: u32,
@@ -61,6 +62,18 @@ pub struct DistanceSnapshot {
     pub status: u32,
     pub object_size: i32,
     pub object_velocity: f64,
+}
+
+impl Default for DistanceSnapshot {
+    fn default() -> Self {
+        Self {
+            distance: 9999,
+            confidence: 0,
+            status: 0,
+            object_size: -1,
+            object_velocity: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, ZeroCopySend, Default)]
@@ -87,7 +100,7 @@ pub struct SimServices {
 }
 
 impl SimServices {
-    pub fn join(name: Option<&str>) -> SimResult<Self> {
+    pub fn join(name: Option<&str>, config: &Config) -> SimResult<Self> {
         let mut node = NodeBuilder::new().config(&Config::default());
 
         if let Some(name) = name {

@@ -1,14 +1,20 @@
 use std::{mem::MaybeUninit, ptr, sync::Arc, thread, time::Duration};
 
-use roboscope_ipc::{DisplayFrame, SimServices};
+use roboscope_ipc::{Config, DisplayFrame, SimServices};
 use tracing::trace;
 
-use crate::{device::start_device_handler, display::{DISPLAY, FRAME_FINISHED}};
+use crate::{
+    device::start_device_handler,
+    display::{DISPLAY, FRAME_FINISHED},
+};
 
 pub fn start(name: &str, entrypoint: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
     DISPLAY.lock().set_program_name(name);
 
-    let ipc = Arc::new(SimServices::join(Some("vex-sdk-desktop"))?);
+    let ipc = Arc::new(SimServices::join(
+        Some("vex-sdk-desktop"),
+        &Config::default(),
+    )?);
 
     start_renderer(ipc.clone());
     start_device_handler(ipc.clone());

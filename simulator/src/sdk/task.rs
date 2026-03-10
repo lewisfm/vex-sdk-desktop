@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use vex_sdk::V5_TouchEvent;
 
-use crate::{canvas::HEADER_HEIGHT, display::DISPLAY};
+use crate::{canvas::HEADER_HEIGHT, device::DEVICES, display::DISPLAY};
 
 #[unsafe(no_mangle)]
 pub extern "system" fn vexTaskAdd(
@@ -67,9 +67,10 @@ impl Task {
     }
 }
 
-static TASKS: Mutex<[Task; 0]> = Mutex::new([
+static TASKS: Mutex<[Task; 1]> = Mutex::new([
     // Should this be a task? I'm not sure if touch data updates automatically.
     // Task::new(update_touch_status, Duration::from_millis(10)),
+    Task::new(update_device_readings, Duration::from_millis(10)),
 ]);
 
 pub fn update_touch_status() {
@@ -94,12 +95,16 @@ pub fn update_touch_status() {
     }
 }
 
+pub fn update_device_readings() {
+    DEVICES.update_readings();
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn vexTasksRun() {
     let mut tasks = TASKS.lock();
     let now = Instant::now();
 
-    for task in &mut *tasks {
+    for task in tasks.as_mut() {
         task.poll(now);
     }
 }

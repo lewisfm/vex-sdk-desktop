@@ -15,8 +15,9 @@ use std::{
 use derive_more::{AsRef, From, TryInto};
 use parking_lot::{Mutex, MutexGuard};
 use roboscope_ipc::{
-    DeviceReadings, DeviceSnapshot, SMART_DEVICES_COUNT, Sample, SimServices, Subscriber,
+    DeviceReadings, DeviceSnapshot, PHYSICS_UPDATE_PERIOD, SMART_DEVICES_COUNT, Sample, SimServices, Subscriber
 };
+use tracing::{debug, trace};
 use vex_sdk::{V5_DeviceT, V5_DeviceType};
 
 use crate::sdk::vexSystemTimeGet;
@@ -25,7 +26,12 @@ pub fn start_device_handler(ipc: Arc<SimServices>) {
     thread::Builder::new()
         .name("Sim Device Handler".into())
         .spawn(move || {
-            let dev_handler = DeviceHandler::new(ipc).expect("created device handler");
+            debug!("Connecting to physics provider");
+            let dev_handler = DeviceHandler::new(ipc.clone()).expect("created device handler");
+
+            while ipc.node.wait(PHYSICS_UPDATE_PERIOD).is_ok() {
+                dev_handler.update().expect("device update OK");
+            }
         })
         .unwrap();
 }
@@ -80,6 +86,7 @@ impl Devices {
     }
 
     pub fn queue_sample(&self, sample: Sample<DeviceReadings>) {
+        trace!(?sample, "Queueing new device sample");
         *self.queued_sample.lock() = Some(QueuedSample {
             inner: sample,
             timestamp: vexSystemTimeGet(),
@@ -88,6 +95,8 @@ impl Devices {
 
     /// Copy the latest device readings (if any are available) from shared memory.
     pub fn update_readings(&self) {
+        trace!("Committing queued sample");
+
         if let Some(sample) = self.queued_sample.lock().take() {
             for (i, &snapshot) in sample.snapshots().iter().enumerate() {
                 *self.smart_devices[i].0.lock() = V5DeviceData {

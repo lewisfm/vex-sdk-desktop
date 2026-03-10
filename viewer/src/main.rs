@@ -17,7 +17,7 @@ use fast_image_resize::{
     pixels::U8x4,
 };
 use roboscope_ipc::{
-    DISPLAY_HEIGHT, DISPLAY_WIDTH, DisplayFrame, PubSubFactory, Sample, SimServices, Subscriber,
+    Config, DISPLAY_HEIGHT, DISPLAY_WIDTH, DisplayFrame, PubSubFactory, Sample, SimServices, Subscriber
 };
 use softbuffer::{Context, Surface};
 use tracing::{debug, error, trace};
@@ -49,7 +49,7 @@ pub struct ViewerApp {
 
 impl ViewerApp {
     pub fn start() -> Result<()> {
-        let ipc = SimServices::join(Some("viewer"))?;
+        let ipc = SimServices::join(Some("viewer"), &Config::default())?;
         let subscriber = ipc.display_frames()?.subscriber_builder().create()?;
 
         let event_loop = EventLoop::with_user_event().build().unwrap();
